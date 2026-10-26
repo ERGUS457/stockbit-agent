@@ -1,0 +1,22 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Data cache & temp
+cache/
+data/
+*.log
+.env
+.env.local
+portfolio.json
+
+# Vercel
+.vercel/
+
+# Virtual Environment
+venv/
+env/
+ENV/
