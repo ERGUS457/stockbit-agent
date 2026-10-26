@@ -782,6 +782,17 @@ DASHBOARD_HTML = """
 </html>
 """
 
+@app.errorhandler(404)
+def page_not_found(e):
+    return jsonify({
+        "error": "404 Not Found",
+        "path": request.path,
+        "environ_path_info": request.environ.get("PATH_INFO"),
+        "environ_matched_path": request.environ.get("HTTP_X_MATCHED_PATH"),
+        "environ_forwarded_uri": request.environ.get("HTTP_X_FORWARDED_URI"),
+        "raw_uri": request.environ.get("RAW_URI")
+    }), 404
+
 @app.route("/")
 def index():
     return render_template_string(DASHBOARD_HTML)
