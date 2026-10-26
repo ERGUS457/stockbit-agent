@@ -20,3 +20,6 @@ portfolio.json
 venv/
 env/
 ENV/
+
+.vercel
+.env*

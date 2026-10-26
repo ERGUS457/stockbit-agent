@@ -7,7 +7,11 @@ import os
 import time
 import requests
 from typing import Optional, Dict, Any
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from config import TICKER_CONGLOMERATE_MAP, USER_REAL_BUDGET
 
 # Muat kredensial dari .env
