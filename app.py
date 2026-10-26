@@ -783,7 +783,19 @@ DASHBOARD_HTML = """
 """
 
 @app.route("/")
+@app.route("/api/index")
 def index():
+    vpath = request.args.get("__vercel_path")
+    if vpath:
+        vpath = vpath.strip()
+        if vpath in ("/api/sr-radar", "api/sr-radar"):
+            return api_sr_radar()
+        elif vpath in ("/api/portfolio", "api/portfolio"):
+            return api_portfolio()
+        elif vpath in ("/api/scan", "api/scan"):
+            return api_scan()
+        elif vpath in ("/api/backtest", "api/backtest"):
+            return api_backtest()
     return render_template_string(DASHBOARD_HTML)
 
 @app.route("/api/sr-radar")
