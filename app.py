@@ -796,6 +796,8 @@ def index():
             return api_scan()
         elif vpath in ("/api/backtest", "api/backtest"):
             return api_backtest()
+        elif vpath in ("/api/bot", "api/bot"):
+            return api_bot()
     return render_template_string(DASHBOARD_HTML)
 
 @app.route("/api/sr-radar")
