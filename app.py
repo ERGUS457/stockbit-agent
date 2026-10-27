@@ -994,6 +994,35 @@ def api_backtest():
         "equity_curve": res.equity_curve
     })
 
+@app.route("/api/bot", methods=["GET", "POST"])
+def api_bot():
+    """Endpoint bot interaktif Telegram (mendukung GET query param ?cmd= dan POST Telegram webhook)."""
+    from telegram_bot import InteractiveTelegramBot
+    bot = InteractiveTelegramBot()
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        message = data.get("message", {})
+        text = message.get("text", "")
+        chat_id = message.get("chat", {}).get("id")
+        
+        reply = bot.handle_command(text) if text else bot.handle_command("/help")
+        if chat_id and bot.bot_token:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{bot.bot_token}/sendMessage",
+                    json={"chat_id": chat_id, "text": reply, "parse_mode": "HTML"},
+                    timeout=5
+                )
+            except Exception:
+                pass
+        return jsonify({"status": "ok", "response": reply})
+
+    # GET request
+    cmd = request.args.get("cmd", "/help")
+    reply = bot.handle_command(cmd)
+    return jsonify({"cmd": cmd, "response": reply})
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
     print(f"🚀 AI Trading Agent Web Dashboard berjalan di: http://localhost:{port}")

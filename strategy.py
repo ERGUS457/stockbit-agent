@@ -27,7 +27,13 @@ class TradeSignal:
     timestamp: datetime
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
+    take_profit_tp1: Optional[float] = None   # Target profit parsial (1:1.5 RR)
+    take_profit_tp2: Optional[float] = None   # Target profit ekspansi (1:2.5 RR)
     risk_reward_ratio: Optional[float] = None
+    adx_value: Optional[float] = None
+    cmf_value: Optional[float] = None
+    market_regime: str = "Neutral"
+    bandarmologi_flow: str = "Neutral"
     reason: str = ""
     strategy_name: str = "IDX-TrendMomentum"
 
@@ -84,6 +90,30 @@ class StrategyEngine:
         prev_macd = float(prev_row["MACD"])
         prev_macd_sig = float(prev_row["MACD_SIGNAL"])
 
+        # Metrik Filter Lanjutan: ADX (Trend vs Sideways) & CMF (Smart Money Accumulation / Bandarmologi)
+        adx = float(row.get("ADX14", 25.0)) if not np.isnan(row.get("ADX14", np.nan)) else 25.0
+        cmf = float(row.get("CMF20", 0.0)) if not np.isnan(row.get("CMF20", np.nan)) else 0.0
+        plus_di = float(row.get("PLUS_DI", 20.0)) if not np.isnan(row.get("PLUS_DI", np.nan)) else 20.0
+        minus_di = float(row.get("MINUS_DI", 20.0)) if not np.isnan(row.get("MINUS_DI", np.nan)) else 20.0
+
+        if adx >= 25 and plus_di > minus_di:
+            market_regime = "Strong Bullish Trend"
+        elif adx >= 25 and minus_di > plus_di:
+            market_regime = "Strong Bearish Trend"
+        elif adx < 20:
+            market_regime = "Sideways / Choppy"
+        else:
+            market_regime = "Moderate Trend"
+
+        if cmf >= 0.08:
+            bandarmologi_flow = "Akumulasi Kuat (Smart Money Inflow)"
+        elif cmf > 0.02:
+            bandarmologi_flow = "Akumulasi Moderat"
+        elif cmf <= -0.08:
+            bandarmologi_flow = "Distribusi Besar (Smart Money Outflow)"
+        else:
+            bandarmologi_flow = "Netral / Ranging Flow"
+
         # -------------------------------------------------------------
         # LOGIKA 1: TREND PULLBACK BUY
         # Syarat:
@@ -91,6 +121,7 @@ class StrategyEngine:
         # 2. Pullback Sehat: RSI berada di rentang 40 - 58 (tidak overbought)
         # 3. Reversal Candle: Candle hijau (Close > Open) dan memantul di atas/dekat EMA20
         # 4. Momentum MACD membaik (Histogram naik atau MACD Golden Cross)
+        # 5. Filter ADX & CMF: Bukan pasar sideways berat (ADX >= 18 atau +DI > -DI) dan CMF tidak distribusi masif
         # -------------------------------------------------------------
         is_bullish_trend = (close > ema50) and (ema20 >= ema50)
         is_pullback = (self.rsi_oversold <= rsi <= 58)
@@ -98,18 +129,21 @@ class StrategyEngine:
         is_bouncing = (close >= ema20 * 0.985)
         is_macd_bullish = (macd >= macd_sig) or (macd > prev_macd)
         is_volume_confirmed = (vol_ratio >= 1.0)
+        is_not_distributing = (cmf >= -0.10)
+        is_trend_viable = (adx >= 18) or (plus_di >= minus_di)
 
-        if is_bullish_trend and is_pullback and is_green_candle and is_bouncing and is_macd_bullish and is_volume_confirmed:
+        if is_bullish_trend and is_pullback and is_green_candle and is_bouncing and is_macd_bullish and is_volume_confirmed and is_not_distributing and is_trend_viable:
             # Hitung Stop Loss berbasis ATR (berjarak 2x ATR di bawah harga close)
             # Dibatasi maksimal 5% di bawah harga entry agar risiko terukur
             sl_distance = max(atr * self.atr_multiplier, close * 0.03)
             sl_distance = min(sl_distance, close * 0.05)
             stop_loss = round(close - sl_distance, 0)
 
-            # Hitung Take Profit dengan Risk:Reward minimal 1:2
+            # Hitung Multi-Target Take Profit: TP1 (1:1.5 RR Breakeven) & TP2 (1:2.5 RR Runner)
             risk = close - stop_loss
-            take_profit = round(close + (risk * MIN_RISK_REWARD_RATIO), 0)
-            rr = (take_profit - close) / risk if risk > 0 else 2.0
+            tp1 = round(close + (risk * 1.5), 0)
+            tp2 = round(close + (risk * 2.5), 0)
+            rr = (tp2 - close) / risk if risk > 0 else 2.5
 
             return TradeSignal(
                 ticker=ticker,
@@ -117,9 +151,15 @@ class StrategyEngine:
                 price=close,
                 timestamp=timestamp,
                 stop_loss=stop_loss,
-                take_profit=take_profit,
+                take_profit=tp2,
+                take_profit_tp1=tp1,
+                take_profit_tp2=tp2,
                 risk_reward_ratio=round(rr, 2),
-                reason=f"Trend Bullish (EMA20>50), RSI Pullback ({rsi:.1f}), Volume Confirmed ({vol_ratio:.1f}x)",
+                adx_value=round(adx, 1),
+                cmf_value=round(cmf, 3),
+                market_regime=market_regime,
+                bandarmologi_flow=bandarmologi_flow,
+                reason=f"Trend Bullish (EMA20>50), RSI Pullback ({rsi:.1f}), Volume Confirmed ({vol_ratio:.1f}x), {bandarmologi_flow}",
                 strategy_name="Trend-Pullback-Pro"
             )
 
@@ -129,25 +169,34 @@ class StrategyEngine:
         # 1. Harga breakout menembus high 20 candle terakhir
         # 2. Volume Spike masif (>= 1.5x rata-rata 20 hari)
         # 3. RSI kuat (55 - 72)
+        # 4. Filter Anti-Bulltrap: ADX >= 20 dan CMF >= -0.02 (didukung akumulasi)
         # -------------------------------------------------------------
         if len(df) >= 21:
             recent_high = float(df["High"].iloc[-21:-1].max())
             is_breakout = (close > recent_high) and (vol_ratio >= self.vol_factor)
-            if is_breakout and (55 <= rsi <= 72):
+            is_healthy_breakout = is_breakout and (55 <= rsi <= 72) and (adx >= 20) and (cmf >= -0.05)
+            if is_healthy_breakout:
                 stop_loss = round(close - (atr * self.atr_multiplier), 0)
                 risk = close - stop_loss
                 if risk > 0:
-                    take_profit = round(close + (risk * MIN_RISK_REWARD_RATIO), 0)
-                    rr = (take_profit - close) / risk
+                    tp1 = round(close + (risk * 1.5), 0)
+                    tp2 = round(close + (risk * 2.5), 0)
+                    rr = (tp2 - close) / risk
                     return TradeSignal(
                         ticker=ticker,
                         action="BUY",
                         price=close,
                         timestamp=timestamp,
                         stop_loss=stop_loss,
-                        take_profit=take_profit,
+                        take_profit=tp2,
+                        take_profit_tp1=tp1,
+                        take_profit_tp2=tp2,
                         risk_reward_ratio=round(rr, 2),
-                        reason=f"Breakout 20-Day High ({recent_high:.0f}) + Volume Spike ({vol_ratio:.1f}x)",
+                        adx_value=round(adx, 1),
+                        cmf_value=round(cmf, 3),
+                        market_regime=market_regime,
+                        bandarmologi_flow=bandarmologi_flow,
+                        reason=f"Breakout 20-Day High ({recent_high:.0f}) + Volume Spike ({vol_ratio:.1f}x) [ADX: {adx:.1f}, {bandarmologi_flow}]",
                         strategy_name="Breakout-Momentum"
                     )
 
@@ -166,6 +215,10 @@ class StrategyEngine:
                 action="SELL",
                 price=close,
                 timestamp=timestamp,
+                adx_value=round(adx, 1),
+                cmf_value=round(cmf, 3),
+                market_regime=market_regime,
+                bandarmologi_flow=bandarmologi_flow,
                 reason=f"Take Profit: RSI Jenuh Beli ({rsi:.1f}) dengan Bearish Rejection",
                 strategy_name="Exit-Overbought"
             )
@@ -176,6 +229,10 @@ class StrategyEngine:
                 action="SELL",
                 price=close,
                 timestamp=timestamp,
+                adx_value=round(adx, 1),
+                cmf_value=round(cmf, 3),
+                market_regime=market_regime,
+                bandarmologi_flow=bandarmologi_flow,
                 reason=f"Cut Loss/Exit: Harga Breakdown di bawah EMA50 ({ema50:.0f})",
                 strategy_name="Exit-TrendBreak"
             )
@@ -185,5 +242,9 @@ class StrategyEngine:
             action="HOLD",
             price=close,
             timestamp=timestamp,
+            adx_value=round(adx, 1),
+            cmf_value=round(cmf, 3),
+            market_regime=market_regime,
+            bandarmologi_flow=bandarmologi_flow,
             reason="Kondisi pasar sideways atau belum memenuhi kriteria entry/exit"
         )

@@ -7,8 +7,15 @@ from pathlib import Path
 
 # Direktori Basis
 BASE_DIR = Path(__file__).resolve().parent
-CACHE_DIR = BASE_DIR / "cache"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+if os.environ.get("VERCEL") or not os.access(BASE_DIR, os.W_OK):
+    CACHE_DIR = Path("/tmp/cache")
+else:
+    CACHE_DIR = BASE_DIR / "cache"
+try:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    CACHE_DIR = Path("/tmp/cache")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Parameter Akun & Trading (Sesuai Standar Akun Virtual Stockbit Rp 100.000.000 & Budget Riil Rp 500.000)
 INITIAL_CAPITAL = 100_000_000.0  # Rp 100 Juta (Simulasi Virtual Stockbit)

@@ -19,7 +19,11 @@ class IDXDataFeed:
     """
     def __init__(self, cache_dir: Path = CACHE_DIR, cache_expiry_hours: int = 12):
         self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self.cache_dir = Path("/tmp/cache")
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_expiry_sec = cache_expiry_hours * 3600
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -105,8 +109,12 @@ class IDXDataFeed:
             df.set_index("Date", inplace=True)
             df.sort_index(inplace=True)
 
-            # Simpan ke cache
-            df.to_csv(cache_file)
+            # Simpan ke cache jika diizinkan (abaikan error filesystem read-only)
+            try:
+                df.to_csv(cache_file)
+            except Exception:
+                pass
+
             return df
 
         except Exception as e:

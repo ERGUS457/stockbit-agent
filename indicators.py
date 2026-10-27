@@ -64,6 +64,68 @@ def calculate_macd(
     hist = macd_line - signal_line
     return macd_line, signal_line, hist
 
+def calculate_adx(df: pd.DataFrame, period: int = 14) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """
+    Menghitung Average Directional Index (ADX), +DI, dan -DI.
+    ADX > 22 mengindikasikan pasar trending kuat, sedangkan ADX < 20 menunjukkan pasar sideways.
+    """
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
+    prev_close = close.shift(1)
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+
+    # True Range
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Directional Movement
+    up_move = high - prev_high
+    down_move = prev_low - low
+
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+
+    # Wilder's Smoothing
+    smooth_tr = tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    smooth_plus_dm = plus_dm.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    smooth_minus_dm = minus_dm.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+
+    plus_di = 100 * (smooth_plus_dm / smooth_tr.replace(0, np.nan)).fillna(0)
+    minus_di = 100 * (smooth_minus_dm / smooth_tr.replace(0, np.nan)).fillna(0)
+
+    di_sum = plus_di + minus_di
+    dx = 100 * ((plus_di - minus_di).abs() / di_sum.replace(0, np.nan)).fillna(0)
+    adx = dx.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean().fillna(0)
+
+    return adx, plus_di, minus_di
+
+def calculate_cmf(df: pd.DataFrame, period: int = 20) -> pd.Series:
+    """
+    Menghitung Chaikin Money Flow (CMF) sebagai estimasi kuantitatif
+    aliran akumulasi vs distribusi modal besar / Smart Money (Bandarmologi proxy).
+    CMF > +0.05 = Akumulasi Kuat, CMF < -0.05 = Distribusi, -0.05 s/d 0.05 = Netral.
+    """
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
+    volume = df["Volume"]
+
+    hl_range = high - low
+    # Multiplier berkisar antara -1 (tutup di low) hingga +1 (tutup di high)
+    mfm = ((close - low) - (high - close)) / hl_range.replace(0, np.nan)
+    mfm = mfm.fillna(0)
+    mfv = mfm * volume
+
+    rolling_mfv = mfv.rolling(window=period).sum()
+    rolling_vol = volume.rolling(window=period).sum()
+
+    cmf = rolling_mfv / rolling_vol.replace(0, np.nan)
+    return cmf.fillna(0)
+
 def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Menambahkan seluruh indikator penting ke DataFrame OHLCV.
@@ -89,6 +151,15 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # Volatilitas & Risiko
     res["ATR14"] = calculate_atr(res, 14)
+
+    # Filter Trend vs Sideways (ADX)
+    adx, plus_di, minus_di = calculate_adx(res, 14)
+    res["ADX14"] = adx
+    res["PLUS_DI"] = plus_di
+    res["MINUS_DI"] = minus_di
+
+    # Bandarmologi / Smart Money Flow Proxy (CMF)
+    res["CMF20"] = calculate_cmf(res, 20)
 
     # Volume Analysis
     res["VOL_MA20"] = calculate_sma(volume, 20)
